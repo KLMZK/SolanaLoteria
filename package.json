@@ -13,6 +13,7 @@
   "version": "0.0.0",
   "private": true,
   "dependencies": {
+    "@fontsource/space-grotesk": "^5.2.10",
     "next": "16.1.5",
     "react": "19.2.3",
     "react-dom": "19.2.3"
