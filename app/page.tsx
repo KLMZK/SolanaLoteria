@@ -1,5 +1,6 @@
 "use client";
 
+<<<<<<< HEAD
 import { Header } from './components/Header';
 import { LoteriaBoard } from './components/LoteriaBoard';
 import { Caller } from './components/Caller';
@@ -165,4 +166,10 @@ export default function Home() {
       />
     </div>
   );
+=======
+import { WelcomeScreen } from './components/WelcomeScreen';
+
+export default function Home() {
+  return <WelcomeScreen />;
+>>>>>>> 9fb350b44badbff13be344d01de8a077a03ab686
 }

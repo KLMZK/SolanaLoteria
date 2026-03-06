@@ -13,7 +13,11 @@
   "version": "0.0.0",
   "private": true,
   "dependencies": {
+<<<<<<< HEAD
     "@solana/web3.js": "^1.98.0",
+=======
+    "@fontsource/space-grotesk": "^5.2.10",
+>>>>>>> 9fb350b44badbff13be344d01de8a077a03ab686
     "next": "16.1.5",
     "react": "19.2.3",
     "react-dom": "19.2.3"
