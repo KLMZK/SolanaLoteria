@@ -141,9 +141,11 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         if (walletAddress) setMyPlayer(players.find(p => p.wallet_address === walletAddress) ?? null);
     }, [players, walletAddress]);
 
-    // ── Realtime ──────────────────────────────────────────────────────────
+    // ── Realtime & Polling Fallback ──────────────────────────────────────────
     useEffect(() => {
         if (!gameId) return;
+
+        // WebSocket listener
         const ch = supabase
             .channel(`game-${gameId}`)
             .on("postgres_changes",
@@ -153,8 +155,23 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                 { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
                 () => fetchPlayers())
             .subscribe();
-        return () => { supabase.removeChannel(ch); };
-    }, [gameId, fetchPlayers]);
+
+        // Polling fallback to ensure we catch new players if WebSocket drops
+        let pollTimer: NodeJS.Timeout;
+        if (game?.status === "waiting") {
+            pollTimer = setInterval(() => {
+                fetchPlayers();
+                // Also optionally refresh game data in case an update was missed
+                fetchGame();
+            }, 3000);
+        }
+
+        return () => {
+            supabase.removeChannel(ch);
+            if (pollTimer) clearInterval(pollTimer);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [gameId, game?.status, fetchPlayers, fetchGame]);
 
     // ── Auto-draw every 4s (host only) ────────────────────────────────────
     useEffect(() => {
