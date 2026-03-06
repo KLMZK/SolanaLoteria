@@ -185,18 +185,34 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
 
     // ── Actions ───────────────────────────────────────────────────────────
 
-    /** Host starts game — only if ALL non-host players have paid */
+    /** Host starts game — also places their own bet, paying the first non-host player's wallet */
     const handleStart = async () => {
         if (!walletAddress) { await connect(); return; }
         setStartLoading(true);
 
-        const paidCount = players.filter(p => p.bet_tx).length;
-        // Update prize_pool = paid players * fee
+        // Host must also pay their bet (sends to first non-host player as escrow)
+        const nonHostPlayer = players.find(p => p.wallet_address !== walletAddress && p.bet_tx);
         const fee = game?.entry_fee_lamports ?? 0;
-        const pool = paidCount * fee;
+
+        if (fee > 0 && nonHostPlayer?.wallet_address) {
+            const hostSig = await placeBet(fee, nonHostPlayer.wallet_address);
+            if (!hostSig) {
+                setStartLoading(false);
+                return; // user cancelled
+            }
+            // Record host's bet_tx
+            if (myPlayer) {
+                await supabase.from("game_players")
+                    .update({ bet_tx: hostSig })
+                    .eq("id", myPlayer.id);
+            }
+        }
 
         const deck = shuffle(LOTERIA_CARDS.map(c => c.id));
-        await supabase.from("games").update({
+        const allPaid = players.filter(p => p.bet_tx && p.bet_tx !== 'host').length + 1; // +1 for host
+        const pool = allPaid * fee;
+
+        const { error } = await supabase.from("games").update({
             status: "playing",
             started_at: new Date().toISOString(),
             deck_card_ids: deck,
@@ -204,6 +220,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
             prize_pool: pool,
         }).eq("id", gameId);
 
+        if (error) console.error("Start failed:", error.message);
         setStartLoading(false);
     };
 
@@ -251,11 +268,15 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
     // ── Derived ───────────────────────────────────────────────────────────
     const isHost = !!(walletAddress && game?.host_wallet === walletAddress);
     const drawnIds = game?.drawn_card_ids ?? [];
+    // Non-host paid = those who actually submitted a Phantom transaction (not the 'host' placeholder)
+    const paidNonHost = players.filter(p => p.bet_tx && p.wallet_address !== game?.host_wallet).length;
+    // Total pool shown: includes host's bet (which is paid at start)
     const paidCount = players.filter(p => p.bet_tx).length;
     const totalPool = paidCount * (game?.entry_fee_lamports ?? 0);
     const iWon = winner?.wallet_address === walletAddress;
     const hostWon = winner?.wallet_address === game?.host_wallet;
-    const canStart = paidCount >= 2; // need at least host + 1 other player with bet
+    // Host can start if at least 1 non-host player has paid AND host is in the game
+    const canStart = paidNonHost >= 1 && !!myPlayer;
 
     // ── Render ────────────────────────────────────────────────────────────
     if (loading) return (
@@ -350,8 +371,8 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                 </div>
                 <div className="flex items-center gap-3">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${game.status === "playing" ? "bg-green-500/20 text-green-400" :
-                            game.status === "finished" ? "bg-red-500/20 text-red-400" :
-                                "bg-yellow-500/20 text-yellow-400"}`}>
+                        game.status === "finished" ? "bg-red-500/20 text-red-400" :
+                            "bg-yellow-500/20 text-yellow-400"}`}>
                         {game.status === "waiting" ? "⏳ Esperando" : game.status === "playing" ? "🔴 En vivo" : "✅ Terminado"}
                     </span>
                     <span className="text-yellow-400 text-sm font-bold">
@@ -373,15 +394,16 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                     {isHost && game.status === "waiting" && (
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
                             <div className="flex justify-between items-center">
-                                <p className="text-white/40 text-xs uppercase tracking-wider font-bold">Jugadores listos</p>
-                                <span className="font-black text-white">{paidCount}/{players.length}</span>
+                                <p className="text-white/40 text-xs uppercase tracking-wider font-bold">Jugadores con apuesta</p>
+                                <span className="font-black text-white">{paidNonHost}/{players.length - 1}</span>
                             </div>
                             <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                                <div className="h-full bg-[#E91E63] rounded-full transition-all" style={{ width: `${players.length ? (paidCount / players.length) * 100 : 0}%` }} />
+                                <div className="h-full bg-[#E91E63] rounded-full transition-all"
+                                    style={{ width: `${players.length > 1 ? (paidNonHost / (players.length - 1)) * 100 : 0}%` }} />
                             </div>
                             {!canStart && (
                                 <p className="text-yellow-400 text-xs text-center">
-                                    Esperando que se unan más jugadores (mínimo 2 con apuesta)
+                                    ⏳ Esperando que al menos 1 jugador se una y apueste
                                 </p>
                             )}
                             <button
@@ -389,7 +411,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                                 disabled={startLoading || !canStart}
                                 className="w-full h-12 bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 font-black rounded-xl transition-all shadow-lg"
                             >
-                                {startLoading ? "⏳ Iniciando..." : `🎮 Iniciar Partida`}
+                                {startLoading ? "⏳ Firmando apuesta en Phantom..." : `🎮 Apostar e Iniciar Partida`}
                             </button>
                             {!canStart && (
                                 <p className="text-white/20 text-[10px] text-center">Necesitas al menos 2 jugadores con apuesta pagada</p>

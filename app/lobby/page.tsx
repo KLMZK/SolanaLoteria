@@ -197,11 +197,6 @@ export default function LobbyPage() {
             }
         }
 
-        // Update prize pool
-        await supabase.from("games").update({
-            prize_pool: supabase.rpc as any, // we'll just track via player count
-        }).eq("id", gameId);
-
         setJoiningId(null);
         router.push(`/game/${gameId}`);
     };
@@ -274,8 +269,8 @@ export default function LobbyPage() {
                                 <button key={opt.label}
                                     onClick={() => setNewBet(opt.lamports)}
                                     className={`flex-1 py-3 rounded-xl text-sm font-black border transition-all ${newBet === opt.lamports
-                                            ? "bg-[#E91E63] border-[#E91E63] text-white shadow-lg shadow-pink-500/20"
-                                            : "bg-white/5 border-white/10 text-white/50 hover:border-white/30 hover:text-white"}`}>
+                                        ? "bg-[#E91E63] border-[#E91E63] text-white shadow-lg shadow-pink-500/20"
+                                        : "bg-white/5 border-white/10 text-white/50 hover:border-white/30 hover:text-white"}`}>
                                     {opt.label}
                                 </button>
                             ))}
