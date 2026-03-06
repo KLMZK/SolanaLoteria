@@ -1,6 +1,5 @@
 "use client";
 
-<<<<<<< HEAD
 import { Header } from './components/Header';
 import { LoteriaBoard } from './components/LoteriaBoard';
 import { Caller } from './components/Caller';
@@ -9,9 +8,8 @@ import { useWallet } from './context/WalletContext';
 import { useState } from 'react';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 
-// The game "house" devnet address where bets are sent.
-// In a real app this would be a smart contract (program) address.
-const HOUSE_ADDRESS = "11111111111111111111111111111111"; // system program as placeholder
+// Placeholder house address — replace with your smart contract address later
+const HOUSE_ADDRESS = "11111111111111111111111111111111";
 
 const BET_OPTIONS = [
   { label: "0.05 SOL", lamports: 0.05 * LAMPORTS_PER_SOL },
@@ -21,7 +19,7 @@ const BET_OPTIONS = [
 
 export default function Home() {
   const { gameState, markedCards, startGame } = useGame();
-  const { connected, balance, placeBet, error: walletError } = useWallet();
+  const { connected, balance, placeBet } = useWallet();
   const [betAmount, setBetAmount] = useState(BET_OPTIONS[0].lamports);
   const [betTx, setBetTx] = useState<string | null>(null);
   const [betLoading, setBetLoading] = useState(false);
@@ -45,7 +43,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#1a1a2e', color: 'white', backgroundImage: 'radial-gradient(at 0% 0%, rgba(233,30,99,0.15) 0px, transparent 50%), radial-gradient(at 100% 0%, rgba(0,188,212,0.10) 0px, transparent 50%)' }}>
       <Header />
 
       <main className="flex-1 container mx-auto px-4 flex flex-col lg:flex-row items-start justify-center gap-10 py-6 pb-24">
@@ -62,32 +60,30 @@ export default function Home() {
           <Caller />
 
           {/* Bet Panel */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 w-full max-w-sm backdrop-blur-sm">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 w-full max-w-sm" style={{ backdropFilter: 'blur(12px)' }}>
             <p className="text-white/60 text-xs uppercase tracking-widest mb-3 font-bold">💰 Tu Apuesta</p>
 
             {!connected ? (
               <div className="text-center py-4">
-                <p className="text-white/30 text-sm mb-2">Conecta tu wallet de Phantom para apostar</p>
-                <p className="text-white/20 text-xs">Asegúrate de tener SOL de prueba en Devnet</p>
+                <p className="text-white/40 text-sm mb-1">Conecta Phantom para apostar</p>
                 <a
                   href="https://faucet.solana.com"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-block mt-3 text-cyan-400 hover:text-cyan-300 text-xs underline"
+                  className="inline-block mt-2 text-cyan-400 hover:text-cyan-300 text-xs underline"
                 >
                   Obtener SOL gratis en Devnet →
                 </a>
               </div>
             ) : gameState === 'idle' ? (
               <>
-                {/* Bet amount selector */}
                 <div className="flex gap-2 mb-4">
                   {BET_OPTIONS.map((opt) => (
                     <button
                       key={opt.label}
                       onClick={() => setBetAmount(opt.lamports)}
                       className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${betAmount === opt.lamports
-                          ? 'bg-[#E91E63] border-[#E91E63] text-white shadow-lg shadow-pink-500/30'
+                          ? 'bg-[#E91E63] border-[#E91E63] text-white shadow-lg'
                           : 'bg-white/5 border-white/10 text-white/60 hover:border-white/30'
                         }`}
                     >
@@ -96,7 +92,6 @@ export default function Home() {
                   ))}
                 </div>
 
-                {/* Balance check */}
                 {balance !== null && balance < betAmount / LAMPORTS_PER_SOL && (
                   <p className="text-red-400 text-xs mb-3 text-center">
                     ⚠ Balance insuficiente ({balance.toFixed(4)} SOL)
@@ -110,17 +105,17 @@ export default function Home() {
                 <button
                   onClick={handleStartWithBet}
                   disabled={betLoading || (balance !== null && balance < betAmount / LAMPORTS_PER_SOL)}
-                  className="w-full bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-4 rounded-xl transition-all shadow-lg shadow-pink-500/20 uppercase tracking-wider text-sm active:scale-95"
+                  className="w-full bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black py-4 rounded-xl transition-all uppercase tracking-wider text-sm"
                 >
-                  {betLoading ? '⏳ Firmando...' : `🎮 Apostar y Comenzar`}
+                  {betLoading ? '⏳ Firmando en Phantom...' : `🎮 Apostar y Comenzar`}
                 </button>
 
                 <p className="text-white/20 text-[10px] mt-2 text-center">
-                  La transacción se procesa en Solana Devnet
+                  Transacción en Solana Devnet
                 </p>
               </>
             ) : (
-              <>
+              <div>
                 {betTx && (
                   <div className="mb-3">
                     <p className="text-green-400 text-xs font-bold mb-1">✅ Apuesta confirmada</p>
@@ -130,19 +125,17 @@ export default function Home() {
                       rel="noreferrer"
                       className="text-cyan-400 text-[10px] font-mono hover:underline break-all"
                     >
-                      {betTx.slice(0, 24)}...{betTx.slice(-8)}
+                      {betTx.slice(0, 20)}...{betTx.slice(-8)}
                     </a>
                   </div>
                 )}
-
-                {/* Prize pool */}
                 <div className="flex justify-between items-center">
                   <span className="text-white/50 text-xs">Premio estimado</span>
                   <span className="text-yellow-400 font-black">
                     {(betAmount / LAMPORTS_PER_SOL * 1.8).toFixed(3)} SOL
                   </span>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -161,15 +154,9 @@ export default function Home() {
 
       {/* Dot grid background */}
       <div
-        className="fixed inset-0 -z-50 opacity-[0.03] pointer-events-none"
-        style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '32px 32px' }}
+        className="fixed inset-0 -z-50 pointer-events-none"
+        style={{ opacity: 0.03, backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '32px 32px' }}
       />
     </div>
   );
-=======
-import { WelcomeScreen } from './components/WelcomeScreen';
-
-export default function Home() {
-  return <WelcomeScreen />;
->>>>>>> 9fb350b44badbff13be344d01de8a077a03ab686
 }
