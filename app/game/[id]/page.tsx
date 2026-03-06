@@ -394,28 +394,31 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                     {isHost && game.status === "waiting" && (
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
                             <div className="flex justify-between items-center">
-                                <p className="text-white/40 text-xs uppercase tracking-wider font-bold">Jugadores con apuesta</p>
-                                <span className="font-black text-white">{paidNonHost}/{players.length - 1}</span>
+                                <p className="text-white/40 text-xs uppercase tracking-wider font-bold">Rivales que apostaron</p>
+                                <span className="font-black text-white">{paidNonHost} / {players.length <= 1 ? "1 (mini)" : players.length - 1}</span>
                             </div>
                             <div className="h-2 bg-white/10 rounded-full overflow-hidden">
                                 <div className="h-full bg-[#E91E63] rounded-full transition-all"
                                     style={{ width: `${players.length > 1 ? (paidNonHost / (players.length - 1)) * 100 : 0}%` }} />
                             </div>
-                            {!canStart && (
-                                <p className="text-yellow-400 text-xs text-center">
-                                    ⏳ Esperando que al menos 1 jugador se una y apueste
+
+                            {!canStart ? (
+                                <p className="text-yellow-400 text-xs text-center border border-yellow-500/30 bg-yellow-500/10 rounded-lg p-2">
+                                    ⏳ Debes esperar a que algún oponente se una a la partida y termine de pagar la apuesta de {(game?.entry_fee_lamports ?? 0) / 1e9} SOL.
+                                </p>
+                            ) : (
+                                <p className="text-green-400 text-xs text-center border border-green-500/30 bg-green-500/10 rounded-lg p-2">
+                                    ✅ ¡Rivales listos! Haz clic para apostar tu parte e iniciar el juego.
                                 </p>
                             )}
+
                             <button
                                 onClick={handleStart}
                                 disabled={startLoading || !canStart}
-                                className="w-full h-12 bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 font-black rounded-xl transition-all shadow-lg"
+                                className="w-full h-14 bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 font-black rounded-xl transition-all shadow-lg"
                             >
                                 {startLoading ? "⏳ Firmando apuesta en Phantom..." : `🎮 Apostar e Iniciar Partida`}
                             </button>
-                            {!canStart && (
-                                <p className="text-white/20 text-[10px] text-center">Necesitas al menos 2 jugadores con apuesta pagada</p>
-                            )}
                         </div>
                     )}
 
