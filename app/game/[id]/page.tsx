@@ -15,7 +15,6 @@ type GameData = {
     drawn_card_ids: number[] | null;
     deck_card_ids: number[] | null;
     host_wallet: string | null;
-    bet_amount: number | null;
 };
 
 type PlayerRow = {
@@ -40,13 +39,13 @@ function shortAddr(addr: string) {
     return `${addr.slice(0, 4)}…${addr.slice(-4)}`;
 }
 
-// Pool address (devnet placeholder — replace with your real treasury)
+// Pool address on devnet — replace with your treasury later
 const POOL_ADDRESS = "11111111111111111111111111111111";
 
 const BET_OPTIONS = [
-    { label: "0.05 SOL", lamports: 0.05 * 1e9 },
-    { label: "0.1 SOL", lamports: 0.1 * 1e9 },
-    { label: "0.25 SOL", lamports: 0.25 * 1e9 },
+    { label: "0.05 SOL", lamports: Math.round(0.05 * 1e9) },
+    { label: "0.1 SOL", lamports: Math.round(0.1 * 1e9) },
+    { label: "0.25 SOL", lamports: Math.round(0.25 * 1e9) },
 ];
 
 // ─── Card components ─────────────────────────────────────────────────────────
@@ -97,7 +96,6 @@ function BoardCard({ cardId, isMarked, isDrawn, onClick, disabled }: {
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function GameRoom({ params }: { params: Promise<{ id: string }> }) {
-    const router = useRouter();
     const { publicKey, balance, placeBet, connect, connected } = useWallet();
     const walletAddress = publicKey?.toBase58() ?? null;
 
@@ -107,12 +105,10 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
     const [myPlayer, setMyPlayer] = useState<PlayerRow | null>(null);
     const [loading, setLoading] = useState(true);
     const [winner, setWinner] = useState<PlayerRow | null>(null);
-
-    // Bet UI
+    const [startLoading, setStartLoading] = useState(false);
     const [selectedBet, setSelectedBet] = useState(BET_OPTIONS[1].lamports);
     const [betLoading, setBetLoading] = useState(false);
     const [betError, setBetError] = useState<string | null>(null);
-    const [startLoading, setStartLoading] = useState(false);
 
     useEffect(() => { params.then(p => setGameId(p.id)); }, [params]);
 
@@ -121,7 +117,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         if (!gameId) return;
         const { data } = await supabase
             .from("games")
-            .select("id, lobby_code, status, drawn_card_ids, deck_card_ids, host_wallet, bet_amount")
+            .select("id, lobby_code, status, drawn_card_ids, deck_card_ids, host_wallet")
             .eq("id", gameId).single();
         if (data) setGame(data as GameData);
     }, [gameId]);
@@ -146,7 +142,9 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
 
     // Sync myPlayer
     useEffect(() => {
-        if (walletAddress) setMyPlayer(players.find(p => p.wallet_address === walletAddress) ?? null);
+        if (walletAddress) {
+            setMyPlayer(players.find(p => p.wallet_address === walletAddress) ?? null);
+        }
     }, [players, walletAddress]);
 
     // ── Realtime ──────────────────────────────────────────────────────────
@@ -154,87 +152,74 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         if (!gameId) return;
         const ch = supabase
             .channel(`game-${gameId}`)
-            .on("postgres_changes", { event: "UPDATE", schema: "public", table: "games", filter: `id=eq.${gameId}` },
-                (payload) => setGame(payload.new as GameData))
-            .on("postgres_changes", { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
+            .on("postgres_changes",
+                { event: "UPDATE", schema: "public", table: "games", filter: `id=eq.${gameId}` },
+                (payload) => setGame(prev => ({ ...prev, ...payload.new } as GameData)))
+            .on("postgres_changes",
+                { event: "*", schema: "public", table: "game_players", filter: `game_id=eq.${gameId}` },
                 () => fetchPlayers())
             .subscribe();
         return () => { supabase.removeChannel(ch); };
     }, [gameId, fetchPlayers]);
 
-    // ── Auto-draw every 4s (host only) ────────────────────────────────────
+    // ── Auto-draw every 4s (host only, only when playing) ─────────────────
     useEffect(() => {
         if (!game || game.status !== "playing") return;
-        if (game.host_wallet !== walletAddress) return;
+        if (!walletAddress || game.host_wallet !== walletAddress) return;
 
-        const id = setInterval(async () => {
+        const timerId = setInterval(async () => {
             const { data: fresh } = await supabase
-                .from("games").select("deck_card_ids, drawn_card_ids, status").eq("id", gameId).single();
-            if (!fresh || fresh.status !== "playing" || !fresh.deck_card_ids?.length) {
-                clearInterval(id); return;
+                .from("games")
+                .select("deck_card_ids, drawn_card_ids, status")
+                .eq("id", gameId)
+                .single();
+
+            if (!fresh || fresh.status !== "playing") { clearInterval(timerId); return; }
+            if (!fresh.deck_card_ids || fresh.deck_card_ids.length === 0) {
+                await supabase.from("games").update({ status: "finished", finished_at: new Date().toISOString() }).eq("id", gameId);
+                clearInterval(timerId);
+                return;
             }
-            const next = fresh.deck_card_ids[0];
-            const newDeck = fresh.deck_card_ids.slice(1);
+
+            const [next, ...rest] = fresh.deck_card_ids;
             const newDrawn = [next, ...(fresh.drawn_card_ids ?? [])];
             await supabase.from("games").update({
-                deck_card_ids: newDeck,
+                deck_card_ids: rest,
                 drawn_card_ids: newDrawn,
-                status: newDeck.length === 0 ? "finished" : "playing",
             }).eq("id", gameId);
         }, 4000);
 
-        return () => clearInterval(id);
+        return () => clearInterval(timerId);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game?.status, game?.host_wallet, walletAddress, gameId]);
 
     // ── Actions ───────────────────────────────────────────────────────────
 
-    /** Host starts the game — also places their bet */
+    /** Host starts the game — no bet required, bet is optional */
     const handleStart = async () => {
         if (!walletAddress) { await connect(); return; }
         setStartLoading(true);
-        setBetError(null);
-
-        // 1. Place SOL bet
-        setBetLoading(true);
-        const sig = await placeBet(selectedBet, POOL_ADDRESS);
-        setBetLoading(false);
-
-        if (!sig) {
-            setBetError("Apuesta cancelada o fallida.");
-            setStartLoading(false);
-            return;
-        }
-
-        // 2. Save bet_tx on host's player row
-        if (myPlayer) {
-            await supabase.from("game_players").update({ bet_tx: sig }).eq("id", myPlayer.id);
-        }
-
-        // 3. Start the game
         const deck = shuffle(LOTERIA_CARDS.map(c => c.id));
-        await supabase.from("games").update({
+        const { error } = await supabase.from("games").update({
             status: "playing",
             started_at: new Date().toISOString(),
             deck_card_ids: deck,
             drawn_card_ids: [],
         }).eq("id", gameId);
-
+        if (error) console.error("Start error:", error);
         setStartLoading(false);
     };
 
-    /** Non-host places bet and confirms joining */
+    /** Place SOL bet (optional, separate from starting) */
     const handlePlaceBet = async () => {
         if (!walletAddress) { await connect(); return; }
         if (!myPlayer) return;
         setBetLoading(true);
         setBetError(null);
-
         const sig = await placeBet(selectedBet, POOL_ADDRESS);
         setBetLoading(false);
-
         if (!sig) {
-            setBetError("Apuesta cancelada o fallida.");
+            setBetError("Apuesta cancelada o fallida. Intenta de nuevo.");
             return;
         }
         await supabase.from("game_players").update({ bet_tx: sig }).eq("id", myPlayer.id);
@@ -251,6 +236,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         setMyPlayer({ ...myPlayer, marked_card_ids: updated });
         await supabase.from("game_players").update({ marked_card_ids: updated }).eq("id", myPlayer.id);
 
+        // Win check
         const drawn = game?.drawn_card_ids ?? [];
         const hasLoteria = myPlayer.board_card_ids.every(id => drawn.includes(id) && updated.includes(id));
         if (hasLoteria) {
@@ -267,9 +253,23 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
     const drawnIds = game?.drawn_card_ids ?? [];
     const myBetPlaced = !!(myPlayer?.bet_tx);
 
+    // ── Render ────────────────────────────────────────────────────────────
     if (loading) return (
         <div className="min-h-screen flex items-center justify-center bg-[#1a1a2e] text-white">
-            <div className="text-center"><div className="text-5xl mb-4 animate-spin">🎴</div><p className="text-white/40">Cargando...</p></div>
+            <div className="text-center">
+                <div className="text-5xl mb-4 animate-spin">🎴</div>
+                <p className="text-white/40">Cargando partida...</p>
+            </div>
+        </div>
+    );
+
+    if (!game) return (
+        <div className="min-h-screen flex items-center justify-center bg-[#1a1a2e] text-white">
+            <div className="text-center">
+                <div className="text-4xl mb-4">❌</div>
+                <p className="text-white/60 mb-4">Partida no encontrada</p>
+                <Link href="/lobby" className="bg-[#E91E63] font-bold px-6 py-3 rounded-xl">Volver al Lobby</Link>
+            </div>
         </div>
     );
 
@@ -280,13 +280,15 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         }}>
 
             {/* Victory overlay */}
-            {winner && (
+            {winner && game.status === "finished" && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" style={{ backdropFilter: "blur(12px)" }}>
                     <div className="bg-slate-900 border border-yellow-500/30 rounded-3xl p-10 text-center max-w-md w-full mx-4 shadow-2xl">
                         <div className="text-7xl mb-4">🏆</div>
                         <h1 className="text-5xl font-black text-yellow-400 mb-3">¡LOTERÍA!</h1>
                         <p className="text-white/70 text-lg mb-8">
-                            {winner.wallet_address === walletAddress ? "🎉 ¡Tú ganaste!" : `Ganó: ${shortAddr(winner.wallet_address ?? "")}`}
+                            {winner.wallet_address === walletAddress
+                                ? "🎉 ¡Tú ganaste!"
+                                : `Ganó: ${shortAddr(winner.wallet_address ?? "")}`}
                         </p>
                         <Link href="/lobby" className="block w-full bg-[#E91E63] hover:bg-[#C2185B] text-white font-black py-4 rounded-xl text-center transition-all text-lg">
                             Volver al Lobby
@@ -300,13 +302,14 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                 <div className="flex items-center gap-4">
                     <Link href="/lobby" className="text-white/40 hover:text-white text-sm transition-colors">← Lobby</Link>
                     <span className="text-white/20">|</span>
-                    <span className="font-mono text-cyan-400 font-black tracking-widest text-lg">{game?.lobby_code}</span>
+                    <span className="font-mono text-cyan-400 font-black tracking-widest text-lg">{game.lobby_code}</span>
                 </div>
                 <div className="flex items-center gap-3">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${game?.status === "playing" ? "bg-green-500/20 text-green-400" :
-                            game?.status === "finished" ? "bg-red-500/20 text-red-400" :
+                    <span className={`px-3 py-1 rounded-full text-xs font-bold ${game.status === "playing" ? "bg-green-500/20 text-green-400" :
+                            game.status === "finished" ? "bg-red-500/20 text-red-400" :
                                 "bg-yellow-500/20 text-yellow-400"}`}>
-                        {game?.status === "waiting" ? "⏳ Esperando" : game?.status === "playing" ? "🔴 En vivo" : "✅ Terminado"}
+                        {game.status === "waiting" ? "⏳ Esperando" :
+                            game.status === "playing" ? "🔴 En vivo" : "✅ Terminado"}
                     </span>
                     <span className="text-white/40 text-sm">{players.length} jugadores</span>
                     {walletAddress && (
@@ -318,92 +321,83 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
             {/* Main grid */}
             <div className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-                {/* Col 1: Caller + controls */}
+                {/* Col 1: Controls + Caller */}
                 <div className="flex flex-col gap-4">
 
-                    {/* Bet panel (waiting state) */}
-                    {game?.status === "waiting" && myPlayer && (
-                        <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                            <p className="text-white/40 text-xs uppercase tracking-widest font-bold mb-3">💰 Tu Apuesta</p>
+                    {/* ── HOST START BUTTON (always visible in waiting) ── */}
+                    {isHost && game.status === "waiting" && (
+                        <button
+                            onClick={handleStart}
+                            disabled={startLoading}
+                            className="w-full h-14 bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-50 font-black text-lg rounded-2xl transition-all shadow-lg shadow-pink-500/30 flex items-center justify-center gap-2"
+                        >
+                            {startLoading ? "⏳ Iniciando..." : `🎮 Iniciar Partida (${players.length} jugador${players.length !== 1 ? "es" : ""})`}
+                        </button>
+                    )}
 
-                            {!connected && (
-                                <button onClick={connect} className="w-full bg-[#E91E63] hover:bg-[#C2185B] font-bold py-3 rounded-xl text-sm transition-all mb-2">
-                                    👻 Conectar Phantom
-                                </button>
-                            )}
-
-                            {connected && !myBetPlaced && (
-                                <>
-                                    <div className="flex gap-2 mb-3">
-                                        {BET_OPTIONS.map(opt => (
-                                            <button key={opt.label}
-                                                onClick={() => setSelectedBet(opt.lamports)}
-                                                className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${selectedBet === opt.lamports
-                                                        ? "bg-[#E91E63] border-[#E91E63] text-white"
-                                                        : "bg-white/5 border-white/10 text-white/50 hover:border-white/30"}`}>
-                                                {opt.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    {balance !== null && balance < selectedBet / 1e9 && (
-                                        <p className="text-red-400 text-xs text-center mb-2">
-                                            ⚠ Balance insuficiente ({balance.toFixed(4)} SOL)
-                                        </p>
-                                    )}
-                                    {betError && <p className="text-red-400 text-xs text-center mb-2 bg-red-500/10 rounded-lg p-2">{betError}</p>}
-                                    <button
-                                        onClick={isHost ? handleStart : handlePlaceBet}
-                                        disabled={betLoading || startLoading || (balance !== null && balance < selectedBet / 1e9)}
-                                        className="w-full bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 font-black py-3 rounded-xl text-sm transition-all"
-                                    >
-                                        {betLoading ? "⏳ Firmando en Phantom..." :
-                                            startLoading ? "⏳ Iniciando..." :
-                                                isHost ? "🎮 Apostar e Iniciar Partida" : "🎰 Confirmar Apuesta"}
-                                    </button>
-                                    <p className="text-white/20 text-[10px] text-center mt-1">Transacción en Solana Devnet</p>
-                                </>
-                            )}
-
-                            {myBetPlaced && (
-                                <div className="text-center">
-                                    <p className="text-green-400 font-bold text-sm">✅ Apuesta confirmada</p>
-                                    <a href={`https://solscan.io/tx/${myPlayer.bet_tx}?cluster=devnet`}
-                                        target="_blank" rel="noreferrer"
-                                        className="text-cyan-400/60 text-[10px] font-mono hover:underline break-all mt-1 block">
-                                        {myPlayer.bet_tx?.slice(0, 16)}...
-                                    </a>
-                                    {isHost && (
-                                        <button
-                                            onClick={handleStart}
-                                            disabled={startLoading || players.length < 1}
-                                            className="mt-3 w-full bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-40 font-black py-3 rounded-xl text-sm transition-all"
-                                        >
-                                            {startLoading ? "⏳ Iniciando..." : `🎮 Iniciar Partida (${players.length} jugadores)`}
-                                        </button>
-                                    )}
-                                    {!isHost && (
-                                        <p className="text-yellow-400/70 text-xs mt-2">⏳ Esperando al host...</p>
-                                    )}
-                                </div>
-                            )}
+                    {/* ── WAITING (non-host) ── */}
+                    {!isHost && game.status === "waiting" && (
+                        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-4 text-center">
+                            <div className="text-2xl mb-1">⏳</div>
+                            <p className="text-yellow-400 font-bold text-sm">Esperando al host...</p>
+                            <p className="text-white/30 text-xs mt-1">El juego comenzará cuando el host lo inicie</p>
                         </div>
                     )}
 
-                    {/* Current card */}
+                    {/* ── BET PANEL (waiting + has player slot) ── */}
+                    {game.status === "waiting" && myPlayer && connected && !myBetPlaced && (
+                        <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                            <p className="text-white/40 text-xs uppercase tracking-widest font-bold mb-3">💰 Apuesta (opcional)</p>
+                            <div className="flex gap-2 mb-3">
+                                {BET_OPTIONS.map(opt => (
+                                    <button key={opt.label}
+                                        onClick={() => setSelectedBet(opt.lamports)}
+                                        className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${selectedBet === opt.lamports
+                                                ? "bg-[#E91E63] border-[#E91E63] text-white"
+                                                : "bg-white/5 border-white/10 text-white/50 hover:border-white/30"}`}>
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
+                            {balance !== null && balance < selectedBet / 1e9 && (
+                                <p className="text-red-400 text-xs text-center mb-2">⚠ Balance insuficiente ({balance.toFixed(4)} SOL)</p>
+                            )}
+                            {betError && <p className="text-red-400 text-xs text-center mb-2 bg-red-500/10 rounded-lg p-2">{betError}</p>}
+                            <button
+                                onClick={handlePlaceBet}
+                                disabled={betLoading || (balance !== null && balance < selectedBet / 1e9)}
+                                className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-40 font-black py-3 rounded-xl text-sm transition-all"
+                            >
+                                {betLoading ? "⏳ Firmando en Phantom..." : "💸 Apostar en Devnet"}
+                            </button>
+                        </div>
+                    )}
+
+                    {myBetPlaced && game.status === "waiting" && (
+                        <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-3 text-center">
+                            <p className="text-green-400 font-bold text-sm">✅ Apuesta confirmada</p>
+                            <a href={`https://solscan.io/tx/${myPlayer?.bet_tx}?cluster=devnet`}
+                                target="_blank" rel="noreferrer"
+                                className="text-cyan-400/60 text-[10px] font-mono hover:underline break-all mt-1 block">
+                                Ver en Solscan →
+                            </a>
+                        </div>
+                    )}
+
+                    {/* ── CURRENT CARD ── */}
                     <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col items-center gap-4">
                         <p className="text-white/40 text-xs uppercase tracking-widest font-bold">🎴 Carta Actual</p>
                         <BigCard cardId={drawnIds[0]} />
                         <p className="text-white/30 text-xs">{drawnIds.length} / 54 cantadas</p>
                     </div>
 
-                    {/* History */}
+                    {/* ── HISTORY ── */}
                     {drawnIds.length > 1 && (
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
                             <p className="text-white/40 text-xs uppercase tracking-widest font-bold mb-3">Anteriores</p>
                             <div className="flex flex-wrap gap-1.5">
                                 {drawnIds.slice(1, 13).map(id => (
-                                    <div key={id} title={CARD_BY_ID[id]?.name}
-                                        className="w-10 h-14 bg-white rounded overflow-hidden flex flex-col opacity-50">
+                                    <div key={id} title={CARD_BY_ID[id]?.name} className="w-10 h-14 bg-white rounded overflow-hidden flex flex-col opacity-50">
                                         <div className="flex-1 flex items-center justify-center text-base bg-orange-50">{CARD_BY_ID[id]?.emoji}</div>
                                         <div className="bg-[#E91E63] py-0.5 px-0.5">
                                             <p className="text-white text-[4px] text-center font-bold uppercase truncate">{CARD_BY_ID[id]?.name}</p>
@@ -427,25 +421,23 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                                             isMarked={(myPlayer.marked_card_ids ?? []).includes(cardId)}
                                             isDrawn={drawnIds.includes(cardId)}
                                             onClick={() => handleMarkCard(cardId)}
-                                            disabled={game?.status !== "playing"} />
+                                            disabled={game.status !== "playing"} />
                                     ))}
                                 </div>
                             </div>
                             <p className="text-white/30 text-xs text-center">
                                 {(myPlayer.marked_card_ids ?? []).length}/16 marcadas
-                                {game?.status === "playing" && " • Click para marcar"}
+                                {game.status === "playing" && " • Toca para marcar"}
                             </p>
                         </>
                     ) : !connected ? (
                         <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-6 text-center text-yellow-400">
-                            <p className="font-bold mb-2">Conecta Phantom para ver tu tabla</p>
-                            <button onClick={connect} className="bg-[#E91E63] font-bold px-4 py-2 rounded-xl text-sm">
-                                👻 Conectar
-                            </button>
+                            <p className="font-bold mb-2">Conecta Phantom para jugar</p>
+                            <button onClick={connect} className="bg-[#E91E63] font-bold px-4 py-2 rounded-xl text-sm">👻 Conectar</button>
                         </div>
                     ) : (
                         <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-white/30 text-center text-sm">
-                            No estás en esta partida
+                            No estás registrado en esta partida
                         </div>
                     )}
                 </div>
@@ -458,9 +450,9 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                             <div key={p.id} className={`bg-white/5 border rounded-xl px-4 py-3 flex items-center justify-between ${p.has_won ? "border-yellow-500/50 bg-yellow-500/10" : "border-white/10"}`}>
                                 <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-mono text-xs text-white/60">{p.wallet_address ? shortAddr(p.wallet_address) : "???"}</span>
-                                    {p.wallet_address === game?.host_wallet && <span className="text-[10px] text-yellow-400 font-bold">HOST</span>}
+                                    {p.wallet_address === game.host_wallet && <span className="text-[10px] text-yellow-400 font-bold">HOST</span>}
                                     {p.wallet_address === walletAddress && <span className="text-[10px] text-cyan-400 font-bold">TÚ</span>}
-                                    {p.bet_tx && <span className="text-[10px] text-green-400">💰</span>}
+                                    {p.bet_tx && <span title="Apuesta enviada" className="text-[10px] text-green-400">💰</span>}
                                 </div>
                                 <div className="text-xs">
                                     {p.has_won
@@ -471,23 +463,23 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                         ))}
                     </div>
 
-                    {/* Invite */}
+                    {/* Invite box */}
                     <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mt-2">
-                        <p className="text-white/40 text-xs uppercase tracking-wider mb-2 font-bold">Invitar amigos</p>
+                        <p className="text-white/40 text-xs uppercase tracking-wider mb-2 font-bold">📨 Invitar amigos</p>
                         <div className="bg-black/30 rounded-xl px-4 py-3 text-center">
-                            <p className="text-cyan-400 font-black text-2xl tracking-widest font-mono">{game?.lobby_code}</p>
+                            <p className="text-cyan-400 font-black text-2xl tracking-widest font-mono">{game.lobby_code}</p>
                         </div>
-                        <p className="text-white/20 text-xs text-center mt-2">Comparte este código en el lobby</p>
+                        <p className="text-white/20 text-xs text-center mt-2">Comparten este código en el lobby</p>
                     </div>
 
-                    {/* Prize estimate */}
-                    {game?.status === "waiting" && players.length > 0 && (
-                        <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                            <p className="text-white/40 text-xs uppercase tracking-wider mb-1 font-bold">Premio estimado</p>
+                    {/* Prize pool hint */}
+                    {game.status === "waiting" && players.filter(p => p.bet_tx).length > 0 && (
+                        <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-4">
+                            <p className="text-white/40 text-xs uppercase tracking-wider mb-1 font-bold">Premio Estimado</p>
                             <p className="text-yellow-400 font-black text-xl">
-                                ~{((selectedBet / 1e9) * players.length * 0.9).toFixed(3)} SOL
+                                ~{((selectedBet / 1e9) * players.filter(p => p.bet_tx).length * 0.9).toFixed(3)} SOL
                             </p>
-                            <p className="text-white/20 text-[10px]">(90% del pool • devnet)</p>
+                            <p className="text-white/20 text-[10px]">90% del pool · {players.filter(p => p.bet_tx).length} apuesta{players.filter(p => p.bet_tx).length !== 1 ? "s" : ""} confirmada{players.filter(p => p.bet_tx).length !== 1 ? "s" : ""}</p>
                         </div>
                     )}
                 </div>
