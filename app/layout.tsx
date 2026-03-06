@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Solana dApp Starter",
-  description: "A minimal Next.js starter powered by @solana/react-hooks",
+  title: "Solana Lotería Mexicana",
+  description: "Juega a la lotería mexicana tradicional con tus amigos en Solana Devnet.",
   icons: {
     icon: "/icon.svg",
     shortcut: "/icon.svg",
