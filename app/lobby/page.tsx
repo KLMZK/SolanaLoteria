@@ -5,32 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LOTERIA_CARDS } from "@/app/lib/cards";
-
-// ─── Phantom helpers ──────────────────────────────────────────────────────────
-function getPhantom() {
-    if (typeof window === "undefined") return null;
-    return (window as any).solana ?? null;
-}
-
-function useWalletAddress() {
-    const [address, setAddress] = useState<string | null>(null);
-
-    useEffect(() => {
-        const phantom = getPhantom();
-        if (!phantom) return;
-        if (phantom.publicKey) setAddress(phantom.publicKey.toBase58());
-
-        const handler = () => {
-            if (phantom.publicKey) setAddress(phantom.publicKey.toBase58());
-            else setAddress(null);
-        };
-        phantom.on("connect", handler);
-        phantom.on("disconnect", () => setAddress(null));
-        return () => { phantom.off?.("connect", handler); };
-    }, []);
-
-    return address;
-}
+import { useWallet } from "@/app/context/WalletContext";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function shuffle<T>(arr: T[]): T[] {
@@ -58,7 +33,8 @@ type GameRow = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function LobbyPage() {
     const router = useRouter();
-    const walletAddress = useWalletAddress();
+    const { publicKey, connect, connected } = useWallet();
+    const walletAddress = publicKey?.toBase58() ?? null;
     const [games, setGames] = useState<GameRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
@@ -66,15 +42,7 @@ export default function LobbyPage() {
     const [joinError, setJoinError] = useState<string | null>(null);
     const [joiningId, setJoiningId] = useState<string | null>(null);
 
-    // ── Connect Phantom if not connected ─────────────────────────────────────
-    const connectWallet = async () => {
-        const phantom = getPhantom();
-        if (!phantom) {
-            window.open("https://phantom.app", "_blank");
-            return;
-        }
-        await phantom.connect();
-    };
+    const connectWallet = connect;
 
     // ── Load open games ───────────────────────────────────────────────────────
     const fetchGames = useCallback(async () => {
