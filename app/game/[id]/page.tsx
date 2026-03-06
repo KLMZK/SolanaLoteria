@@ -101,6 +101,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
     const [winner, setWinner] = useState<PlayerRow | null>(null);
 
     const [startLoading, setStartLoading] = useState(false);
+    const [startError, setStartError] = useState<string | null>(null);
     const [payoutLoading, setPayoutLoading] = useState(false);
     const [payoutTx, setPayoutTx] = useState<string | null>(null);
     const [payoutError, setPayoutError] = useState<string | null>(null);
@@ -176,7 +177,11 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
 
             const [next, ...rest] = fresh.deck_card_ids;
             const newDrawn = [next, ...(fresh.drawn_card_ids ?? [])];
-            await supabase.from("games").update({ deck_card_ids: rest, drawn_card_ids: newDrawn }).eq("id", gameId);
+            const { error: drawErr } = await supabase.from("games")
+                .update({ deck_card_ids: rest, drawn_card_ids: newDrawn })
+                .eq("id", gameId);
+
+            if (drawErr) console.error("AutoDraw Error:", drawErr.message);
         }, 4000);
 
         return () => clearInterval(timerId);
@@ -189,6 +194,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
     const handleStart = async () => {
         if (!walletAddress) { await connect(); return; }
         setStartLoading(true);
+        setStartError(null);
 
         // Host must also pay their bet (sends to first non-host player as escrow)
         const nonHostPlayer = players.find(p => p.wallet_address !== walletAddress && p.bet_tx);
@@ -197,6 +203,7 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         if (fee > 0 && nonHostPlayer?.wallet_address) {
             const hostSig = await placeBet(fee, nonHostPlayer.wallet_address);
             if (!hostSig) {
+                setStartError("Apuesta fallida o rechazada en Phantom.");
                 setStartLoading(false);
                 return; // user cancelled
             }
@@ -209,14 +216,15 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
         }
 
         const deck = shuffle(LOTERIA_CARDS.map(c => c.id));
+        const [firstCard, ...restDeck] = deck;
         const allPaid = players.filter(p => p.bet_tx && p.bet_tx !== 'host').length + 1; // +1 for host
         const pool = allPaid * fee;
 
         const { error } = await supabase.from("games").update({
             status: "playing",
             started_at: new Date().toISOString(),
-            deck_card_ids: deck,
-            drawn_card_ids: [],
+            deck_card_ids: restDeck,
+            drawn_card_ids: [firstCard],
             prize_pool: pool,
         }).eq("id", gameId);
 
@@ -419,6 +427,12 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                             >
                                 {startLoading ? "⏳ Firmando apuesta en Phantom..." : `🎮 Apostar e Iniciar Partida`}
                             </button>
+
+                            {startError && (
+                                <p className="text-red-400 font-bold bg-red-500/10 border border-red-500/20 p-2 rounded-lg text-center text-sm">
+                                    ⚠️ {startError}
+                                </p>
+                            )}
                         </div>
                     )}
 
