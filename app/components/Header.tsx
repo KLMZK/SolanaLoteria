@@ -36,6 +36,7 @@ export const Header: React.FC = () => {
                     </span>
                 )}
 
+                {/* Solana Wallet */}
                 {connected && publicKey ? (
                     <div className="flex items-center gap-3">
                         {/* Balance */}
@@ -86,3 +87,4 @@ export const Header: React.FC = () => {
         </header>
     );
 };
+
