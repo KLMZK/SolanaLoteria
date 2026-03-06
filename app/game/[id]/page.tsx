@@ -208,11 +208,10 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
                 return; // user cancelled
             }
             // Record host's bet_tx
-            if (myPlayer) {
-                await supabase.from("game_players")
-                    .update({ bet_tx: hostSig })
-                    .eq("id", myPlayer.id);
-            }
+            await supabase.from("game_players")
+                .update({ bet_tx: hostSig })
+                .eq("game_id", gameId)
+                .eq("wallet_address", walletAddress);
         }
 
         const deck = shuffle(LOTERIA_CARDS.map(c => c.id));
@@ -283,8 +282,8 @@ export default function GameRoom({ params }: { params: Promise<{ id: string }> }
     const totalPool = paidCount * (game?.entry_fee_lamports ?? 0);
     const iWon = winner?.wallet_address === walletAddress;
     const hostWon = winner?.wallet_address === game?.host_wallet;
-    // Host can start if at least 1 non-host player has paid AND host is in the game
-    const canStart = paidNonHost >= 1 && !!myPlayer;
+    // Host can start if at least 1 non-host player has paid (the host is mostly checking others)
+    const canStart = paidNonHost >= 1;
 
     // ── Render ────────────────────────────────────────────────────────────
     if (loading) return (
