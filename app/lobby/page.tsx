@@ -1,0 +1,247 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { LOTERIA_CARDS } from "@/app/lib/cards";
+
+type GameRow = {
+    id: string;
+    lobby_code: string | null;
+    status: string;
+    prize_pool: number;
+    max_players: number | null;
+    host_id: string | null;
+    created_at: string;
+    player_count?: number;
+};
+
+function shuffle<T>(arr: T[]): T[] {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+export default function LobbyPage() {
+    const router = useRouter();
+    const [user, setUser] = useState<any>(null);
+    const [games, setGames] = useState<GameRow[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [creating, setCreating] = useState(false);
+    const [joinCode, setJoinCode] = useState("");
+    const [joinError, setJoinError] = useState<string | null>(null);
+
+    // Auth check
+    useEffect(() => {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (!session) router.push("/login");
+            else setUser(session.user);
+        });
+    }, [router]);
+
+    // Load open lobbies
+    const fetchGames = async () => {
+        setLoading(true);
+        const { data, error } = await supabase
+            .from("games")
+            .select("id, lobby_code, status, prize_pool, max_players, host_id, created_at")
+            .eq("status", "waiting")
+            .order("created_at", { ascending: false })
+            .limit(20);
+
+        if (!error && data) {
+            // Get player counts
+            const gamesWithCounts = await Promise.all(
+                data.map(async (g) => {
+                    const { count } = await supabase
+                        .from("game_players")
+                        .select("*", { count: "exact", head: true })
+                        .eq("game_id", g.id);
+                    return { ...g, player_count: count ?? 0 };
+                })
+            );
+            setGames(gamesWithCounts);
+        }
+        setLoading(false);
+    };
+
+    useEffect(() => {
+        if (user) fetchGames();
+    }, [user]);
+
+    // Realtime subscription for lobbies
+    useEffect(() => {
+        const channel = supabase
+            .channel("lobbies")
+            .on("postgres_changes", { event: "*", schema: "public", table: "games" }, fetchGames)
+            .subscribe();
+        return () => { supabase.removeChannel(channel); };
+    }, [user]);
+
+    const handleCreateGame = async () => {
+        if (!user) return;
+        setCreating(true);
+        // Get or create the player's profile
+        const { data: profile } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("id", user.id)
+            .single();
+
+        if (!profile) {
+            await supabase.from("profiles").insert({ id: user.id, username: user.email?.split("@")[0] });
+        }
+
+        // Create the game
+        const { data: game, error } = await supabase
+            .from("games")
+            .insert({ host_id: user.id, status: "waiting", prize_pool: 0 })
+            .select()
+            .single();
+
+        if (error || !game) { setCreating(false); return; }
+
+        // Join as host with a random board
+        const boardCardIds = shuffle(LOTERIA_CARDS).slice(0, 16).map((c) => c.id);
+        await supabase.from("game_players").insert({
+            game_id: game.id,
+            player_id: user.id,
+            board_card_ids: boardCardIds,
+        });
+
+        setCreating(false);
+        router.push(`/game/${game.id}`);
+    };
+
+    const handleJoinByCode = async () => {
+        setJoinError(null);
+        if (!joinCode.trim()) return;
+
+        const { data: game } = await supabase
+            .from("games")
+            .select("id, status")
+            .eq("lobby_code", joinCode.toUpperCase())
+            .single();
+
+        if (!game) { setJoinError("Lobby not found. Check the code and try again."); return; }
+        if (game.status !== "waiting") { setJoinError("This lobby has already started."); return; }
+
+        // Ensure profile exists
+        await supabase.from("profiles").upsert({ id: user.id, username: user.email?.split("@")[0] }, { onConflict: "id" });
+
+        // Check if already joined
+        const { data: existing } = await supabase
+            .from("game_players")
+            .select("id")
+            .eq("game_id", game.id)
+            .eq("player_id", user.id)
+            .single();
+
+        if (!existing) {
+            const boardCardIds = shuffle(LOTERIA_CARDS).slice(0, 16).map((c) => c.id);
+            await supabase.from("game_players").insert({
+                game_id: game.id,
+                player_id: user.id,
+                board_card_ids: boardCardIds,
+            });
+        }
+
+        router.push(`/game/${game.id}`);
+    };
+
+    return (
+        <div className="min-h-screen text-white" style={{ backgroundColor: "#1a1a2e", backgroundImage: "radial-gradient(at 0% 0%, rgba(233,30,99,0.15) 0px, transparent 50%), radial-gradient(at 100% 0%, rgba(0,188,212,0.10) 0px, transparent 50%)" }}>
+            {/* Header */}
+            <header className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                <Link href="/" className="flex items-center gap-3 group">
+                    <span className="text-2xl">🎴</span>
+                    <h1 className="text-xl font-black tracking-tight">SOLANA <span className="text-[#E91E63]">LOTERÍA</span></h1>
+                </Link>
+                <span className="text-white/40 text-sm">{user?.email}</span>
+            </header>
+
+            <main className="max-w-4xl mx-auto px-4 py-10 flex flex-col gap-8">
+                <div className="text-center">
+                    <h2 className="text-4xl font-black mb-2">Sala de Espera</h2>
+                    <p className="text-white/40">Crea una partida o únete con un código</p>
+                </div>
+
+                {/* Actions */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <button
+                        onClick={handleCreateGame}
+                        disabled={creating}
+                        className="h-16 bg-[#E91E63] hover:bg-[#C2185B] disabled:opacity-50 font-black text-lg rounded-2xl transition-all shadow-lg shadow-pink-500/20 flex items-center justify-center gap-3"
+                    >
+                        {creating ? "⏳ Creando..." : "➕ Crear Partida"}
+                    </button>
+
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            maxLength={6}
+                            placeholder="Código (ej. AB3K9Z)"
+                            value={joinCode}
+                            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                            className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 font-mono text-lg uppercase tracking-widest focus:outline-none focus:border-cyan-400 transition-colors"
+                        />
+                        <button
+                            onClick={handleJoinByCode}
+                            className="bg-cyan-500 hover:bg-cyan-400 font-bold px-5 rounded-2xl transition-all"
+                        >
+                            Unirse
+                        </button>
+                    </div>
+                </div>
+
+                {joinError && (
+                    <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl text-sm text-center">
+                        {joinError}
+                    </div>
+                )}
+
+                {/* Open lobbies */}
+                <div>
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-black text-lg uppercase tracking-wider">Partidas Abiertas</h3>
+                        <button onClick={fetchGames} className="text-white/40 hover:text-white text-sm transition-colors">🔄 Actualizar</button>
+                    </div>
+
+                    {loading ? (
+                        <div className="text-center py-12 text-white/30">Cargando partidas...</div>
+                    ) : games.length === 0 ? (
+                        <div className="text-center py-12 text-white/30 bg-white/5 rounded-2xl border border-white/10">
+                            No hay partidas abiertas. ¡Crea la primera!
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-3">
+                            {games.map((game) => (
+                                <div key={game.id} className="bg-white/5 border border-white/10 hover:border-white/20 rounded-2xl px-5 py-4 flex items-center justify-between transition-all group">
+                                    <div className="flex items-center gap-4">
+                                        <span className="font-mono text-xl font-black text-cyan-400 tracking-widest">{game.lobby_code}</span>
+                                        <div className="text-sm text-white/40">
+                                            <span>{game.player_count} / {game.max_players ?? 8} jugadores</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={async () => {
+                                            setJoinCode(game.lobby_code ?? "");
+                                            await handleJoinByCode();
+                                        }}
+                                        className="bg-[#E91E63]/80 hover:bg-[#E91E63] text-white font-bold px-4 py-2 rounded-xl text-sm transition-all opacity-0 group-hover:opacity-100"
+                                    >
+                                        Unirse →
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </main>
+        </div>
+    );
+}

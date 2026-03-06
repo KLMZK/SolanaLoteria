@@ -45,6 +45,13 @@ export const Header: React.FC = () => {
                 </div>
             </div>
 
+            {/* Lobby Nav */}
+            <nav className="hidden md:flex items-center gap-6">
+                <Link href="/lobby" className="text-white/60 hover:text-white text-sm font-bold transition-colors flex items-center gap-1">
+                    🎮 Multijugador
+                </Link>
+            </nav>
+
             {/* Right side */}
             <div className="flex items-center gap-3">
                 {error && (
