@@ -1,10 +1,27 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useWallet } from '@/app/context/WalletContext';
+import { supabase } from '@/lib/supabase';
+import Link from 'next/link';
 
 export const Header: React.FC = () => {
     const { connected, connecting, publicKey, balance, connect, disconnect, error } = useWallet();
+    const [user, setUser] = useState<any>(null);
+
+    useEffect(() => {
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            setUser(session?.user ?? null);
+        });
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            setUser(session?.user ?? null);
+        });
+        return () => subscription.unsubscribe();
+    }, []);
+
+    const handleLogout = async () => {
+        await supabase.auth.signOut();
+    };
 
     const shortAddress = publicKey
         ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
@@ -34,6 +51,30 @@ export const Header: React.FC = () => {
                     <span className="hidden md:block text-red-400 text-xs bg-red-500/10 border border-red-500/20 px-3 py-1.5 rounded-lg max-w-xs truncate">
                         ⚠ {error}
                     </span>
+                )}
+
+                {/* Supabase Auth */}
+                {user ? (
+                    <div className="flex items-center gap-3 border-r border-white/20 pr-4 mr-1">
+                        <span className="hidden sm:block text-white/70 text-xs font-mono px-3 py-2">
+                            {user.email}
+                        </span>
+                        <button
+                            onClick={handleLogout}
+                            className="text-white/50 hover:text-white transition-colors text-sm font-bold active:scale-95"
+                        >
+                            Logout
+                        </button>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-3 border-r border-white/20 pr-4 mr-1">
+                        <Link href="/login" className="text-white hover:text-cyan-400 transition-colors text-sm font-bold">
+                            Log In
+                        </Link>
+                        <Link href="/register" className="bg-white/10 hover:bg-white/20 text-white border border-white/20 font-bold py-2 px-4 rounded-xl transition-all text-sm active:scale-95">
+                            Sign Up
+                        </Link>
+                    </div>
                 )}
 
                 {/* Solana Wallet */}
@@ -87,4 +128,3 @@ export const Header: React.FC = () => {
         </header>
     );
 };
-
